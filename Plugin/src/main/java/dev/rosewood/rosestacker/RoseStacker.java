@@ -63,6 +63,9 @@ public class RoseStacker extends RosePlugin {
         WorldGuardHook.registerFlag();
     }
 
+    // Debug build (issue #843): periodic broken-piglin sampler
+    private dev.rosewood.rosestacker.debug.BrokenPiglinSampler debugSampler;
+
     @Override
     public void enable() {
         // Register listeners
@@ -75,6 +78,11 @@ public class RoseStacker extends RosePlugin {
         pluginManager.registerEvents(new StackToolListener(this), this);
         pluginManager.registerEvents(new BreedingListener(this), this);
         pluginManager.registerEvents(new BeeListener(this), this);
+
+        // ===== DEBUG START (issue #843) =====
+        this.debugSampler = new dev.rosewood.rosestacker.debug.BrokenPiglinSampler(this);
+        this.debugSampler.start();
+        // ===== DEBUG END =====
 
         if (NMSUtil.getVersionNumber() >= 17) {
             try {
@@ -112,6 +120,12 @@ public class RoseStacker extends RosePlugin {
 
     @Override
     public void disable() {
+        // ===== DEBUG START (issue #843) =====
+        if (this.debugSampler != null) {
+            this.debugSampler.stop();
+            this.debugSampler = null;
+        }
+        // ===== DEBUG END =====
         this.getScheduler().cancelAllTasks();
     }
 
