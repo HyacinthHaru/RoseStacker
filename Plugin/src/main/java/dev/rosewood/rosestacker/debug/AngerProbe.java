@@ -245,4 +245,82 @@ public final class AngerProbe {
         if (pz.getAnger() <= 0) return false;
         return getPersistentAngerUUID(entity) == null;
     }
+
+    /**
+     * Categorisation of an angry piglin's state — used by sampler to distinguish
+     * between several possible failure modes that all manifest as "angry but not chasing".
+     */
+    public enum AngerState {
+        /** Timer is 0 — not angry, normal neutral state. */
+        NOT_ANGRY,
+        /** Timer&gt;0, UUID set, target is alive — fully healthy aggro. */
+        HEALTHY,
+        /** Timer&gt;0, UUID is null — original issue #843 failure mode. */
+        NO_UUID,
+        /** Timer&gt;0, UUID set, target field is null — updatePersistentAnger isn't refreshing. */
+        NO_TARGET,
+        /** Timer&gt;0, UUID set, target is non-null but isAlive==false. */
+        DEAD_TARGET,
+        /** Other unexpected state (probe failure or unknown). */
+        OTHER,
+    }
+
+    public static AngerState classify(LivingEntity entity) {
+        if (!(entity instanceof PigZombie pz)) return AngerState.OTHER;
+        if (pz.getAnger() <= 0) return AngerState.NOT_ANGRY;
+
+        UUID uuid = getPersistentAngerUUID(entity);
+        if (uuid == null) return AngerState.NO_UUID;
+
+        org.bukkit.entity.LivingEntity target = null;
+        if (entity instanceof org.bukkit.entity.Mob m) {
+            target = m.getTarget();
+        }
+
+        if (target == null) return AngerState.NO_TARGET;
+        if (!target.isValid() || target.isDead()) return AngerState.DEAD_TARGET;
+        return AngerState.HEALTHY;
+    }
+
+    /**
+     * Detailed dump for a piglin's anger state, including target alive/type info.
+     * For per-stuck-sample logging in BrokenPiglinSampler.
+     */
+    public static String dumpDetailed(LivingEntity entity) {
+        if (entity == null) return "null entity";
+
+        int timer = -1;
+        try {
+            if (entity instanceof PigZombie pz) timer = pz.getAnger();
+        } catch (Throwable ignored) {}
+
+        UUID uuid = getPersistentAngerUUID(entity);
+
+        org.bukkit.entity.LivingEntity target = null;
+        try {
+            if (entity instanceof org.bukkit.entity.Mob m) target = m.getTarget();
+        } catch (Throwable ignored) {}
+
+        String targetStr;
+        if (target == null) {
+            targetStr = "null";
+        } else {
+            String aliveStr = target.isValid() ? "alive" : (target.isDead() ? "dead" : "removed");
+            targetStr = String.format("%s(%s,%s)",
+                    target.getName(),
+                    target.getType(),
+                    aliveStr);
+        }
+
+        AngerState state = classify(entity);
+
+        org.bukkit.Location loc = entity.getLocation();
+        return String.format("entity=%s state=%s timer=%d UUID=%s target=%s pos=(%.1f,%.1f,%.1f)",
+                entity.getUniqueId().toString().substring(0, 8),
+                state.name(),
+                timer,
+                uuid == null ? "null" : uuid.toString(),
+                targetStr,
+                loc.getX(), loc.getY(), loc.getZ());
+    }
 }
