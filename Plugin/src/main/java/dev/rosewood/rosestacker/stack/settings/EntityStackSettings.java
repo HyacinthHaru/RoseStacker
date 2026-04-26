@@ -326,8 +326,21 @@ public class EntityStackSettings extends StackSettings {
 
         switch (this.entityType) {
             case BEE -> ((Bee) stacked).setAnger(((Bee) unstacked).getAnger());
-            case WOLF -> ((Wolf) stacked).setAngry(((Wolf) unstacked).isAngry());
-            case ZOMBIFIED_PIGLIN -> ((PigZombie) stacked).setAngry(((PigZombie) unstacked).isAngry());
+            // ===== Issue #843 fix =====
+            // Bukkit's PigZombie.setAngry / Wolf.setAngry only writes the anger TIMER,
+            // not the persistentAngerTarget UUID. Without UUID, NeutralMob cannot
+            // refresh the target via UUID lookup once the runtime target is dropped,
+            // leaving the mob with timer>0 + UUID=null — angry sound but no chase.
+            // Fix: also transfer UUID; if unstacked itself is malformed (UUID=null),
+            // try to derive UUID from its current target; if that also fails,
+            // skip setAngry to avoid propagating the broken state.
+            case WOLF -> applyAngerTransfer(stacked, unstacked,
+                    ((Wolf) unstacked).isAngry(),
+                    () -> ((Wolf) stacked).setAngry(true));
+            case ZOMBIFIED_PIGLIN -> applyAngerTransfer(stacked, unstacked,
+                    ((PigZombie) unstacked).isAngry(),
+                    () -> ((PigZombie) stacked).setAngry(true));
+            // ===== Issue #843 fix end =====
         }
 
         SpawnerFlagPersistenceHook.setPersistence(stacked);
@@ -337,6 +350,56 @@ public class EntityStackSettings extends StackSettings {
 
         if (SettingKey.ENTITY_KILL_TRANSFER_FIRE.get())
             stacked.setFireTicks(unstacked.getFireTicks());
+    }
+
+    /**
+     * Issue #843 fix: transfer NeutralMob anger state correctly.
+     * <p>
+     * Bukkit's {@code setAngry(true)} only writes the timer (e.g.
+     * {@code setRemainingPersistentAngerTime}/{@code setTimeToRemainAngry}); it does
+     * NOT touch {@code persistentAngerTarget}. Combined with the {@code REMOVABLE_NBT_KEYS}
+     * stripping {@code angry_at}/{@code AngryAt} from stack data, every unstack used to
+     * produce a piglin/wolf with {@code timer>0} but {@code UUID=null} — meaning
+     * {@code NeutralMob.updatePersistentAnger} cannot refresh target via UUID lookup
+     * if the runtime target is later dropped (very likely on 1.21.11 due to the
+     * absolute-end-time refactor + new {@code SpearUseGoal} friendly-fire that
+     * keeps refreshing the timer).
+     * <p>
+     * This helper transfers UUID alongside timer, with a {@code target → UUID} fallback
+     * to break the contagion chain: if {@code unstacked} itself has no UUID
+     * (i.e. it is itself a previous-iteration broken mob), derive UUID from its
+     * current Player target. If that also fails, refuse to call setAngry — leaving
+     * the new head as a clean neutral mob, breaking the infinite propagation loop.
+     */
+    private static void applyAngerTransfer(LivingEntity stacked,
+                                            LivingEntity unstacked,
+                                            boolean unstackedIsAngry,
+                                            Runnable setAngryTrue) {
+        if (!unstackedIsAngry) {
+            return; // unstacked wasn't angry — nothing to transfer
+        }
+
+        java.util.UUID angerUuid = dev.rosewood.rosestacker.debug.AngerProbe.getPersistentAngerUUID(unstacked);
+
+        // Fallback: if unstacked's own UUID is null (it was already broken),
+        // try to derive one from its current target (if it's a Player).
+        if (angerUuid == null && unstacked instanceof Mob unstackedMob) {
+            LivingEntity target = unstackedMob.getTarget();
+            if (target instanceof org.bukkit.entity.Player player) {
+                angerUuid = player.getUniqueId();
+            }
+        }
+
+        if (angerUuid == null) {
+            // Both unstacked.UUID and target-derived UUID are null —
+            // unstacked is in a fully malformed state. Don't propagate it.
+            // Leave stacked as neutral; if a player attacks it, normal aggro paths apply.
+            return;
+        }
+
+        // Healthy transfer: UUID first, then timer.
+        dev.rosewood.rosestacker.debug.AngerProbe.setPersistentAngerUUID(stacked, angerUuid);
+        setAngryTrue.run();
     }
 
     /**
