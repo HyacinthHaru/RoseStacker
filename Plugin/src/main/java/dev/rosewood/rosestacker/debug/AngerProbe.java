@@ -32,6 +32,7 @@ public final class AngerProbe {
 
     private static volatile Method getPersistentAngerTargetMethod;
     private static volatile Method setPersistentAngerTargetMethod;
+    private static volatile Method stopBeingAngryMethod;
     private static volatile Method entityReferenceOfUuidMethod;
     private static volatile Method entityReferenceGetUUIDMethod;
 
@@ -235,6 +236,27 @@ public final class AngerProbe {
                 uuid == null ? "null" : uuid.toString().substring(0, 8),
                 targetStr,
                 broken ? " ⚠BROKEN" : "");
+    }
+
+    /**
+     * Reflectively calls NMS {@code NeutralMob.stopBeingAngry()} to fully reset anger state.
+     * Clears timer, UUID, lastHurtByMob, and target in one go via the vanilla path.
+     * No-op if the entity is not a NeutralMob.
+     */
+    public static boolean forceStopBeingAngry(LivingEntity entity) {
+        Object handle = getNeutralMobHandle(entity);
+        if (handle == null) return false;
+        try {
+            if (stopBeingAngryMethod == null) {
+                Method m = handle.getClass().getMethod("stopBeingAngry");
+                m.setAccessible(true);
+                stopBeingAngryMethod = m;
+            }
+            stopBeingAngryMethod.invoke(handle);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /**
